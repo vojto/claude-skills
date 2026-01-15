@@ -1,6 +1,6 @@
 ---
 name: postgres
-description: Contains guides on how we use PostgreSQL. Use when you want to do something non trivial with Postgres.
+description: Contains guides on how we use PostgreSQL. Use whenever working with PostgreSQL in any way.
 ---
 
 ## Stored Generated Columns

@@ -74,6 +74,75 @@ def format_pct(value):
     return f"{value:.0f}%"
 
 
+def get_recovery_zone(recovery_pct):
+    """Get recovery zone color based on percentage."""
+    if recovery_pct >= 67:
+        return "green"
+    elif recovery_pct >= 34:
+        return "yellow"
+    return "red"
+
+
+def format_sleep_stages(stage_summary):
+    """Format sleep stage data from a stage summary object."""
+    ss = stage_summary
+    sleep_ms = ss.total_sleep_time_milli
+    return {
+        "rem": f"{format_duration(ss.total_rem_sleep_time_milli)} ({ss.total_rem_sleep_time_milli/sleep_ms*100:.0f}%)",
+        "deep": f"{format_duration(ss.total_slow_wave_sleep_time_milli)} ({ss.total_slow_wave_sleep_time_milli/sleep_ms*100:.0f}%)",
+        "light": f"{format_duration(ss.total_light_sleep_time_milli)} ({ss.total_light_sleep_time_milli/sleep_ms*100:.0f}%)",
+        "awake": format_duration(ss.total_awake_time_milli),
+    }
+
+
+def format_sleep_entry(sleep_obj, include_date=False):
+    """Format a sleep object into a result dict."""
+    tz_offset = getattr(sleep_obj, 'timezone_offset', '+00:00')
+    local_start = to_local_time(sleep_obj.start, tz_offset)
+    local_end = to_local_time(sleep_obj.end, tz_offset)
+
+    result = {
+        "bedtime": local_start.strftime("%I:%M %p"),
+        "wake_time": local_end.strftime("%I:%M %p"),
+    }
+    if include_date:
+        result = {"date": local_start.strftime("%Y-%m-%d"), **result}
+
+    if sleep_obj.score:
+        result["performance"] = format_pct(sleep_obj.score.sleep_performance_percentage)
+        result["efficiency"] = format_pct(sleep_obj.score.sleep_efficiency_percentage)
+        if sleep_obj.score.stage_summary:
+            ss = sleep_obj.score.stage_summary
+            result["time_in_bed"] = format_duration(ss.total_in_bed_time_milli)
+            result["actual_sleep"] = format_duration(ss.total_sleep_time_milli)
+            result["stages"] = format_sleep_stages(ss)
+        if sleep_obj.score.respiratory_rate:
+            result["respiratory_rate"] = f"{sleep_obj.score.respiratory_rate:.1f} breaths/min"
+
+    return result, local_end
+
+
+def format_recovery_entry(record, include_date=True):
+    """Format a recovery record into a result dict."""
+    score = record["score"]
+    recovery_pct = score["recovery_score"]
+
+    result = {
+        "recovery_score": f"{recovery_pct:.0f}%",
+        "zone": get_recovery_zone(recovery_pct),
+        "hrv": f"{score['hrv_rmssd_milli']:.1f} ms",
+        "resting_hr": f"{score['resting_heart_rate']:.0f} bpm",
+    }
+    if include_date:
+        result = {"date": record["created_at"][:10], **result}
+    if score.get("spo2_percentage"):
+        result["spo2"] = f"{score['spo2_percentage']:.1f}%"
+    if score.get("skin_temp_celsius"):
+        result["skin_temp"] = f"{score['skin_temp_celsius']:.1f}°C"
+
+    return result
+
+
 def load_credentials():
     if not CREDENTIALS_FILE.exists():
         print("error: Credentials not found. Run 'python setup.py' first.", file=sys.stderr)
@@ -109,6 +178,13 @@ def get_whoop_client():
     )
     # Save token after creation (will persist any refreshed tokens)
     client.save_token(str(CREDENTIALS_FILE))
+    # Re-add client credentials (save_token doesn't include them)
+    with open(CREDENTIALS_FILE) as f:
+        saved = json.load(f)
+    saved["client_id"] = creds["client_id"]
+    saved["client_secret"] = creds["client_secret"]
+    with open(CREDENTIALS_FILE, "w") as f:
+        json.dump(saved, f, indent=2)
     return client
 
 
@@ -131,31 +207,9 @@ def cmd_sleep(args):
     # Find sleep that ended on target date
     result = None
     for s in sleep_data:
-        tz_offset = getattr(s, 'timezone_offset', '+00:00')
-        local_end = to_local_time(s.end, tz_offset)
+        entry, local_end = format_sleep_entry(s, include_date=True)
         if local_end.date() == target_date:
-            local_start = to_local_time(s.start, tz_offset)
-            result = {
-                "date": local_start.strftime("%Y-%m-%d"),
-                "bedtime": local_start.strftime("%I:%M %p"),
-                "wake_time": local_end.strftime("%I:%M %p"),
-            }
-            if s.score:
-                result["performance"] = format_pct(s.score.sleep_performance_percentage)
-                result["efficiency"] = format_pct(s.score.sleep_efficiency_percentage)
-                if s.score.stage_summary:
-                    ss = s.score.stage_summary
-                    sleep_ms = ss.total_sleep_time_milli
-                    result["time_in_bed"] = format_duration(ss.total_in_bed_time_milli)
-                    result["actual_sleep"] = format_duration(sleep_ms)
-                    result["stages"] = {
-                        "rem": f"{format_duration(ss.total_rem_sleep_time_milli)} ({ss.total_rem_sleep_time_milli/sleep_ms*100:.0f}%)",
-                        "deep": f"{format_duration(ss.total_slow_wave_sleep_time_milli)} ({ss.total_slow_wave_sleep_time_milli/sleep_ms*100:.0f}%)",
-                        "light": f"{format_duration(ss.total_light_sleep_time_milli)} ({ss.total_light_sleep_time_milli/sleep_ms*100:.0f}%)",
-                        "awake": format_duration(ss.total_awake_time_milli),
-                    }
-                if s.score.respiratory_rate:
-                    result["respiratory_rate"] = f"{s.score.respiratory_rate:.1f} breaths/min"
+            result = entry
             break
 
     if result:
@@ -175,27 +229,7 @@ def cmd_recovery(args):
     for r in records:
         record_date = datetime.strptime(r["created_at"][:10], "%Y-%m-%d").date()
         if record_date == target_date:
-            score = r["score"]
-            recovery_pct = score["recovery_score"]
-
-            if recovery_pct >= 67:
-                zone = "green"
-            elif recovery_pct >= 34:
-                zone = "yellow"
-            else:
-                zone = "red"
-
-            result = {
-                "date": r["created_at"][:10],
-                "recovery_score": f"{recovery_pct:.0f}%",
-                "zone": zone,
-                "hrv": f"{score['hrv_rmssd_milli']:.1f} ms",
-                "resting_hr": f"{score['resting_heart_rate']:.0f} bpm",
-            }
-            if score.get("spo2_percentage"):
-                result["spo2"] = f"{score['spo2_percentage']:.1f}%"
-            if score.get("skin_temp_celsius"):
-                result["skin_temp"] = f"{score['skin_temp_celsius']:.1f}°C"
+            result = format_recovery_entry(r)
             break
 
     if result:
@@ -294,31 +328,9 @@ def cmd_summary(args):
     sleep_data = client.sleep.get_all(start=start, end=end)
 
     for s in sleep_data:
-        tz_offset = getattr(s, 'timezone_offset', '+00:00')
-        local_end = to_local_time(s.end, tz_offset)
+        entry, local_end = format_sleep_entry(s)
         if local_end.date() == target_date:
-            local_start = to_local_time(s.start, tz_offset)
-            sleep_entry = {
-                "bedtime": local_start.strftime("%I:%M %p"),
-                "wake_time": local_end.strftime("%I:%M %p"),
-            }
-            if s.score:
-                sleep_entry["performance"] = format_pct(s.score.sleep_performance_percentage)
-                sleep_entry["efficiency"] = format_pct(s.score.sleep_efficiency_percentage)
-                if s.score.stage_summary:
-                    ss = s.score.stage_summary
-                    sleep_ms = ss.total_sleep_time_milli
-                    sleep_entry["time_in_bed"] = format_duration(ss.total_in_bed_time_milli)
-                    sleep_entry["actual_sleep"] = format_duration(sleep_ms)
-                    sleep_entry["stages"] = {
-                        "rem": f"{format_duration(ss.total_rem_sleep_time_milli)} ({ss.total_rem_sleep_time_milli/sleep_ms*100:.0f}%)",
-                        "deep": f"{format_duration(ss.total_slow_wave_sleep_time_milli)} ({ss.total_slow_wave_sleep_time_milli/sleep_ms*100:.0f}%)",
-                        "light": f"{format_duration(ss.total_light_sleep_time_milli)} ({ss.total_light_sleep_time_milli/sleep_ms*100:.0f}%)",
-                        "awake": format_duration(ss.total_awake_time_milli),
-                    }
-                if s.score.respiratory_rate:
-                    sleep_entry["respiratory_rate"] = f"{s.score.respiratory_rate:.1f} breaths/min"
-            summary["sleep"] = sleep_entry
+            summary["sleep"] = entry
             break
 
     # Get recovery
@@ -328,27 +340,7 @@ def cmd_summary(args):
     for r in records:
         record_date = datetime.strptime(r["created_at"][:10], "%Y-%m-%d").date()
         if record_date == target_date:
-            score = r["score"]
-            recovery_pct = score["recovery_score"]
-
-            if recovery_pct >= 67:
-                zone = "green"
-            elif recovery_pct >= 34:
-                zone = "yellow"
-            else:
-                zone = "red"
-
-            recovery_entry = {
-                "recovery_score": f"{recovery_pct:.0f}%",
-                "zone": zone,
-                "hrv": f"{score['hrv_rmssd_milli']:.1f} ms",
-                "resting_hr": f"{score['resting_heart_rate']:.0f} bpm",
-            }
-            if score.get("spo2_percentage"):
-                recovery_entry["spo2"] = f"{score['spo2_percentage']:.1f}%"
-            if score.get("skin_temp_celsius"):
-                recovery_entry["skin_temp"] = f"{score['skin_temp_celsius']:.1f}°C"
-            summary["recovery"] = recovery_entry
+            summary["recovery"] = format_recovery_entry(r, include_date=False)
             break
 
     output_yaml(summary)

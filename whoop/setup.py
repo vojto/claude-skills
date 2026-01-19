@@ -12,6 +12,7 @@ Prerequisites:
     pip install whoopy python-dotenv
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -57,9 +58,17 @@ def main():
             redirect_uri="http://localhost:1234"
         )
 
-        # Save tokens to credentials file
+        # Save tokens to credentials file (including client credentials)
         credentials_file = Path(__file__).parent / ".whoop_credentials.json"
         client.save_token(str(credentials_file))
+
+        # Add client_id and client_secret to the saved credentials
+        with open(credentials_file) as f:
+            creds = json.load(f)
+        creds["client_id"] = client_id
+        creds["client_secret"] = client_secret
+        with open(credentials_file, "w") as f:
+            json.dump(creds, f, indent=2)
 
         print()
         print("=" * 60)
@@ -70,7 +79,7 @@ def main():
 
         # Test the connection by fetching user profile
         print("Testing connection...")
-        user = client.user.profile()
+        user = client.user.get_profile()
         print(f"Connected as: {user.first_name} {user.last_name}")
         print(f"Email: {user.email}")
         print()

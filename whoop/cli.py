@@ -98,15 +98,18 @@ def api_get(endpoint, params=None):
 
 
 def get_whoop_client():
-    """Get an authenticated WhoopClient."""
+    """Get an authenticated WhoopClient and save refreshed tokens."""
     from whoopy import WhoopClient
     creds = load_credentials()
-    return WhoopClient.from_token(
+    client = WhoopClient.from_token(
         access_token=creds["access_token"],
         refresh_token=creds["refresh_token"],
         client_id=creds["client_id"],
         client_secret=creds["client_secret"]
     )
+    # Save token after creation (will persist any refreshed tokens)
+    client.save_token(str(CREDENTIALS_FILE))
+    return client
 
 
 def output_yaml(data):

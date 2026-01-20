@@ -1,3 +1,4 @@
 .env
 .env.*
 .whoop_credentials.json
+__pycache__/

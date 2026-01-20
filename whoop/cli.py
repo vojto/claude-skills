@@ -169,22 +169,22 @@ def api_get(endpoint, params=None):
 def get_whoop_client():
     """Get an authenticated WhoopClient and save refreshed tokens."""
     from whoopy import WhoopClient
-    creds = load_credentials()
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    client_id = os.getenv("WHOOP_CLIENT_ID")
+    client_secret = os.getenv("WHOOP_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        print("error: WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET must be set in .env file", file=sys.stderr)
+        sys.exit(1)
+
     client = WhoopClient.from_token(
-        access_token=creds["access_token"],
-        refresh_token=creds["refresh_token"],
-        client_id=creds["client_id"],
-        client_secret=creds["client_secret"]
+        path=str(CREDENTIALS_FILE),
+        client_id=client_id,
+        client_secret=client_secret
     )
-    # Save token after creation (will persist any refreshed tokens)
-    client.save_token(str(CREDENTIALS_FILE))
-    # Re-add client credentials (save_token doesn't include them)
-    with open(CREDENTIALS_FILE) as f:
-        saved = json.load(f)
-    saved["client_id"] = creds["client_id"]
-    saved["client_secret"] = creds["client_secret"]
-    with open(CREDENTIALS_FILE, "w") as f:
-        json.dump(saved, f, indent=2)
     return client
 
 
@@ -202,7 +202,7 @@ def cmd_sleep(args):
     end = datetime.combine(target_date, datetime.max.time())
 
     client = get_whoop_client()
-    sleep_data = client.sleep.get_all(start=start, end=end)
+    sleep_data, _ = client.sleep.collection(start=start, end=end)
 
     # Find sleep that ended on target date
     result = None
@@ -320,17 +320,28 @@ def cmd_summary(args):
 
     summary = {"date": str(target_date)}
 
-    # Get sleep
-    start = datetime.combine(target_date, datetime.min.time()) - timedelta(days=1)
-    end = datetime.combine(target_date, datetime.max.time())
+    # Get sleep from v2 API
+    sleep_data = api_get("/developer/v2/activity/sleep")
+    sleep_records = sleep_data.get("records", [])
 
-    client = get_whoop_client()
-    sleep_data = client.sleep.get_all(start=start, end=end)
+    for s in sleep_records:
+        tz_offset = s.get('timezone_offset', '+00:00')
+        end_time = datetime.fromisoformat(s['end'].replace('Z', '+00:00'))
+        local_end = to_local_time(end_time, tz_offset)
 
-    for s in sleep_data:
-        entry, local_end = format_sleep_entry(s)
-        if local_end.date() == target_date:
-            summary["sleep"] = entry
+        if local_end.date() == target_date and s.get('score'):
+            score = s['score']
+            stage_summary = score.get('stage_summary', {})
+            # Calculate total sleep time from sleep stages
+            total_sleep_ms = (
+                stage_summary.get('total_light_sleep_time_milli', 0) +
+                stage_summary.get('total_slow_wave_sleep_time_milli', 0) +
+                stage_summary.get('total_rem_sleep_time_milli', 0)
+            )
+            summary["sleep"] = {
+                "time_in_bed": format_duration(stage_summary.get('total_in_bed_time_milli', 0)),
+                "actual_sleep": format_duration(total_sleep_ms),
+            }
             break
 
     # Get recovery

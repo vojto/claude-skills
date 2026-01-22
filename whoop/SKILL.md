@@ -5,39 +5,49 @@ description: Access WHOOP health and fitness data. Use when the user asks about 
 
 ## CLI Usage
 
-Run from `~/.claude/skills/whoop/`:
+Load env vars first, then run commands:
 
 ```bash
-cd ~/.claude/skills/whoop
+export $(cat ~/.claude/skills/whoop/.env | xargs)
 
-# Today's summary (sleep + recovery)
-python cli.py summary
+# Quick health summary (one-liner)
+whoopskill summary
+
+# All data as JSON
+whoopskill
+
+# Human-readable format
+whoopskill --pretty
 
 # Specific date
-python cli.py summary 2026-01-17
-
-# Individual commands
-python cli.py sleep [DATE]
-python cli.py recovery [DATE]
-python cli.py workouts [DATE]
-python cli.py cycles [DATE]
-python cli.py profile
+whoopskill --date 2026-01-17
 ```
-
-DATE format: `YYYY-MM-DD` (defaults to today)
 
 ## Setup (One-Time)
 
-If credentials don't exist or are expired:
+1. Install: `npm install -g whoopskill`
+2. Set environment variables (in shell profile or `.env`):
+   - `WHOOP_CLIENT_ID`
+   - `WHOOP_CLIENT_SECRET`
+   - `WHOOP_REDIRECT_URI`
+3. Authenticate: `whoopskill auth login`
+
+Tokens are stored in `~/.whoop-cli/tokens.json` and auto-refresh.
+
+## Auth Commands
 
 ```bash
-cd ~/.claude/skills/whoop && python setup.py
+whoopskill auth login    # Authenticate
+whoopskill auth status   # Check auth status
+whoopskill auth refresh  # Manually refresh token
+whoopskill auth logout   # Clear credentials
 ```
 
 ## Available Data
 
-- **sleep** - Bedtime, wake time, duration, stages (REM/deep/light), efficiency, performance
-- **recovery** - Recovery %, zone (green/yellow/red), HRV, resting HR, SpO2, skin temp
-- **workouts** - Individual workouts with strain, HR, calories
-- **cycles** - Daily strain totals
 - **profile** - User info
+- **body** - Body measurements
+- **sleep** - Sleep records with stages, efficiency, performance
+- **recovery** - Recovery %, zone, HRV, resting HR, SpO2, skin temp
+- **workouts** - Workouts with strain, HR, calories
+- **cycles** - Daily physiological cycles
